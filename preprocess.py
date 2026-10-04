@@ -251,7 +251,9 @@ def parse_bool(name: str, default: str = "false") -> bool:
     value = os.environ.get(name, default).lower()
     if value in {"1", "true", "yes"}:
         return True
-    if value in {"0", "false", "no"}:
+    # "" is the host's rendering of an explicitly-disabled boolean (same
+    # shape as an unset optional), so it reads as False like "0"/"false"/"no".
+    if value in {"0", "false", "no", ""}:
         return False
     raise ContractError(f"{name} must be a boolean")
 
