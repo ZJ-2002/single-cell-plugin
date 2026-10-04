@@ -498,14 +498,23 @@ shm_size = "1Gi"
 
 [[nodes]]
 kind = "h5ad_ucell_score"
-desc = "Scores per-cell gene sets with rank-based UCell statistics."
+desc = "Scores per-cell gene sets with the official UCell rank-based statistic."
 doc = """
 Input port 0 is H5AD. Output ports are output.h5ad then report.json.
 gene_sets is a JSON object (passed as a string) mapping gene-set name to
-its signature genes; each gets a UCell rank-based score in obs: mean of
-margin/(margin+rank) over the signature (rank 1 = highest expression,
-margin = (n_genes - signature size)/2), bounded 0-1, library-size
-independent, computed on the raw matrix without normalization.
+its signature genes; each gets an official UCell score in obs: genes are
+ranked per cell by descending expression (rank 1 = highest, ties_method
+breaks ties), ranks are truncated at max_rank, and the score is the
+normalized Mann-Whitney U statistic of the signature's ranks (0-1,
+library-size independent, computed on the raw matrix without
+normalization). Algorithm matches UCell 2.16.0 (ScoreSignatures_UCell);
+scores are on the official UCell scale and are NOT comparable with
+outputs of the pre-fix rational heuristic (report algorithm_version
+distinguishes the runs). missing_genes=impute scores absent signature
+genes at max_rank (official default); skip drops them from the
+signature. max_rank is capped at the number of genes, and a signature
+longer than max_rank is rejected, as in UCell. obs column names and the
+present/missing per-set summary are unchanged.
 """
 timeout_secs = 3600
 artifact_prefix = "/artifacts/h5ad_ucell_score"
@@ -519,6 +528,9 @@ outputs = [
 
 [nodes.params]
 gene_sets = { type = "string", doc = "JSON object mapping gene-set name to signature gene array, e.g. \"{\\\"cytotoxic\\\": [\\\"NKG7\\\", \\\"GNLY\\\"]}\"" }
+max_rank = { type = "int", default = 1500, min = 1.0, doc = "UCell rank truncation (maxRank): ranks at or beyond this are clamped; capped at the number of genes (UCell default 1500)" }
+ties_method = { type = "string", default = "average", doc = "Tie-breaking for per-cell expression ranks: average, min, max, or dense (UCell default average)" }
+missing_genes = { type = "string", default = "impute", doc = "Absent signature genes: impute (scored at max_rank, UCell default) or skip (dropped from the signature)" }
 
 [nodes.command]
 interpreter = "python"
@@ -528,6 +540,9 @@ script_file = "scripts/run_workflow.py"
 AUTONOMICS_SINGLE_CELL_WORKFLOW = "ucell_score"
 AUTONOMICS_SINGLE_CELL_PARAMS = "/work/.autonomics/files/params.json"
 SC_P_JSON_GENE_SETS = "{{ gene_sets }}"
+SC_P_INT_MAX_RANK = "{{ max_rank }}"
+SC_P_STR_TIES_METHOD = "{{ ties_method }}"
+SC_P_STR_MISSING_GENES = "{{ missing_genes }}"
 
 [nodes.resources]
 cpus = 2.0

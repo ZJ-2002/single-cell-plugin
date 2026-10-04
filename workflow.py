@@ -79,6 +79,14 @@ def opt_int(params: dict[str, Any], name: str, default: int) -> int:
     return value
 
 
+def opt_choice(params: dict[str, Any], name: str, choices: tuple[str, ...], default: str) -> str:
+    value = params.get(name, default)
+    if not isinstance(value, str) or value not in choices:
+        allowed = ", ".join(choices)
+        raise ContractError(f"parameter `{name}` must be one of: {allowed}")
+    return value
+
+
 def delimiter_spec(value: Any) -> str | None:
     if not isinstance(value, str) or not value.strip():
         raise ContractError("parameter `delimiter` must be a nonempty string")
@@ -781,6 +789,18 @@ def marker_annotate(params: dict[str, Any]) -> tuple[ad.AnnData, Path, Path]:
     return adata, output_path, report_path
 
 
+# Algorithm spec: UCell 2.16.0 (R package, carmonalab/UCell). The ucell_score
+# workflow reimplements ScoreSignatures_UCell / calculate_Uscore / u_stat from
+# the installed package source: per-cell descending expression ranks with
+# configurable ties, truncation at max_rank, missing signature genes either
+# imputed at max_rank or skipped, and the normalized Mann-Whitney U statistic
+# of the signature's clamped ranks. Scores are on the official UCell scale
+# (0-1) and are not comparable with the pre-2.16.0-spec rational heuristic.
+UCELL_SPEC_VERSION = "UCell 2.16.0"
+UCELL_TIES_METHODS = ("average", "min", "max", "dense")
+UCELL_MISSING_MODES = ("impute", "skip")
+
+
 def ucell_score(params: dict[str, Any]) -> tuple[ad.AnnData, Path, Path]:
     from scipy.stats import rankdata
 
@@ -790,10 +810,19 @@ def ucell_score(params: dict[str, Any]) -> tuple[ad.AnnData, Path, Path]:
     gene_sets = params.get("gene_sets")
     if not isinstance(gene_sets, dict) or not gene_sets:
         raise ContractError("gene_sets must be a nonempty object")
+    max_rank = opt_int(params, "max_rank", 1500)
+    ties_method = opt_choice(params, "ties_method", UCELL_TIES_METHODS, "average")
+    missing_mode = opt_choice(params, "missing_genes", UCELL_MISSING_MODES, "impute")
+    if max_rank <= 0:
+        raise ContractError("max_rank must be positive")
     adata = read_h5ad(input_path)
     known = set(str(value) for value in adata.var_names)
     summaries: dict[str, dict[str, Any]] = {}
     indices: dict[str, np.ndarray] = {}
+    signature_sizes: dict[str, int] = {}
+    n_genes = int(adata.n_vars)
+    # UCell caps maxRank at the number of ranked genes (calculate_Uscore).
+    effective_max_rank = min(max_rank, n_genes)
     for name, genes in gene_sets.items():
         if not isinstance(name, str) or not name or name in adata.obs:
             raise ContractError(f"gene set name `{name}` is empty or already present in obs")
@@ -802,14 +831,27 @@ def ucell_score(params: dict[str, Any]) -> tuple[ad.AnnData, Path, Path]:
         present = [gene for gene in genes if gene in known]
         if not present:
             raise ContractError(f"gene set `{name}` has no genes present in the H5AD")
+        if len(genes) > effective_max_rank:
+            raise ContractError(
+                f"gene set `{name}` has more genes ({len(genes)}) than the effective "
+                f"max_rank ({effective_max_rank}); increase max_rank or shorten the signature"
+            )
         indices[name] = np.asarray([adata.var_names.get_loc(gene) for gene in present], dtype=int)
+        # u_stat ranks over the full requested signature when missing genes are
+        # imputed at max_rank, and over present genes only when they are skipped.
+        signature_sizes[name] = len(genes) if missing_mode == "impute" else len(present)
         missing = sorted(set(genes) - known)
         summaries[name] = {
             "genes_requested": int(len(genes)),
             "genes_present": int(len(present)),
             "missing_genes": missing,
         }
-    n_genes = int(adata.n_vars)
+    for name, len_sig in signature_sizes.items():
+        if len_sig * effective_max_rank - len_sig * (len_sig + 1) / 2.0 <= 0:
+            raise ContractError(
+                f"gene set `{name}` cannot be scored: the effective max_rank "
+                f"({effective_max_rank}) leaves no rank range for the signature"
+            )
     scores = {name: np.empty(adata.n_obs, dtype=float) for name in indices}
     chunk_cells = max(1, min(1000, adata.n_obs))
     for start in range(0, adata.n_obs, chunk_cells):
@@ -820,27 +862,57 @@ def ucell_score(params: dict[str, Any]) -> tuple[ad.AnnData, Path, Path]:
             if sp.issparse(block)
             else np.asarray(block, dtype=np.float64)
         )
-        # UCell: rank genes within each cell, rank 1 = highest expression
-        # (average ranks break ties), then score = mean(margin/(margin+rank))
-        # over the signature with margin = (n_genes - signature size) / 2.
-        descending = (n_genes + 1) - rankdata(dense, axis=1, method="average")
+        # Rank genes within each cell, rank 1 = highest expression, ties
+        # broken by the configured method (UCell default: average). Ranking
+        # the negated values reproduces R frankv(x, ties.method=...,
+        # order=-1L) for every supported ties method.
+        descending = rankdata(-dense, axis=1, method=ties_method)
         for name, index in indices.items():
-            rank_margin = max(1.0, (n_genes - len(index)) / 2.0)
-            contribution = rank_margin / (rank_margin + descending[:, index])
-            scores[name][start:stop] = contribution.mean(axis=1)
+            len_sig = signature_sizes[name]
+            n_imputed = len_sig - len(index)
+            # u_stat: clamps each present gene's rank at max_rank, starts the
+            # rank sum at one max_rank per imputed (missing) gene, then returns
+            # the normalized Mann-Whitney U statistic of the signature ranks.
+            rank_sum = (
+                np.minimum(descending[:, index], effective_max_rank).sum(axis=1)
+                + n_imputed * effective_max_rank
+            )
+            rank_sum_min = len_sig * (len_sig + 1) / 2.0
+            denominator = len_sig * effective_max_rank - rank_sum_min
+            scores[name][start:stop] = 1.0 - (rank_sum - rank_sum_min) / denominator
     for name, values in scores.items():
         adata.obs[name] = values
         summaries[name]["mean"] = float(np.mean(values))
         summaries[name].update(percentile_summary(values))
-    adata.uns["ucell_params"] = {
+    ucell_params = {
         "method": "ucell",
-        "gene_sets": {name: int(len(index)) for name, index in indices.items()},
+        "algorithm": "ucell",
+        "algorithm_version": UCELL_SPEC_VERSION,
+        "max_rank": int(max_rank),
+        "effective_max_rank": int(effective_max_rank),
+        "ties_method": ties_method,
+        "missing_genes": missing_mode,
+        "gene_sets": {
+            name: {
+                "genes_requested": summaries[name]["genes_requested"],
+                "genes_present": int(len(index)),
+                "genes_scored": signature_sizes[name],
+            }
+            for name, index in indices.items()
+        },
     }
+    adata.uns["ucell_params"] = ucell_params
     report = {
         "schema_version": "1.0",
         "operation": "ucell_score",
         "cells": int(adata.n_obs),
         "genes": n_genes,
+        "algorithm": ucell_params["algorithm"],
+        "algorithm_version": ucell_params["algorithm_version"],
+        "max_rank": ucell_params["max_rank"],
+        "effective_max_rank": ucell_params["effective_max_rank"],
+        "ties_method": ties_method,
+        "missing_genes": missing_mode,
         "gene_sets": summaries,
     }
     write_json(report, report_path)
