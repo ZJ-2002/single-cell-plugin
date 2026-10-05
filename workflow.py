@@ -131,6 +131,13 @@ def write_h5ad(adata: ad.AnnData, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if sp.issparse(adata.X) and not sp.isspmatrix_csr(adata.X):
         adata.X = sp.csr_matrix(adata.X)
+    # anndata >= 0.11 refuses to write pd.arrays.StringArray unless opted
+    # in; uns string lists (e.g. ucell missing_genes summaries) become one
+    # on the pinned 0.11.4 runtime. Every reader here is anndata >= 0.11
+    # or the engine's Rust-side H5AD reader, so opting in is safe.
+    settings = getattr(ad, "settings", None)
+    if settings is not None and hasattr(settings, "allow_write_nullable_strings"):
+        settings.allow_write_nullable_strings = True
     adata.write_h5ad(path, compression="lzf")
 
 
