@@ -3,12 +3,13 @@ plugin_name = "single-cell"
 
 [image]
 # Local-only deployment of the official UCell 2.16.0 algorithm
-# (fix/ucell-official-algorithm @ ba985f63, branch local/ucell-deploy).
+# (fix/ucell-official-algorithm @ 806c2e9 = UCell fix + anndata>=0.11
+# nullable-string write fix; manifest repoint on branch local/ucell-deploy).
 # Not pushed upstream (no push rights); image built locally via
 # `podman build -t localhost/autonomics/single-cell-preprocessor:0.2.1-ucellfix .`
 # Upstream published digest (pre-fix rational-heuristic formula):
 # ghcr.io/auto-nomics/autonomics/single-cell-preprocessor@sha256:c34c26428d13804c2528bc734805c1ccfe909353604ac08da0ce9c68890e7e18
-reference = "localhost/autonomics/single-cell-preprocessor:0.2.1-ucellfix"
+reference = "localhost/autonomics/single-cell-preprocessor@sha256:5069c3ffaac0b11dfe950c1cd026f4195317be47b529b730572d9e670ad0f59b"
 tag = "0.2.1-ucellfix"
 upstream = "scverse Scanpy 1.11.3 pinned runtime; python 3.11.11-slim base @ sha256:e61d857ebc3825e2aa7a698e9d46d8108d5980cafeb5ab783121f7a5b13d8b0b"
 license = "BSD-3-Clause"
