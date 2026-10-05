@@ -796,13 +796,25 @@ def marker_annotate(params: dict[str, Any]) -> tuple[ad.AnnData, Path, Path]:
     return adata, output_path, report_path
 
 
-# Algorithm spec: UCell 2.16.0 (R package, carmonalab/UCell). The ucell_score
-# workflow reimplements ScoreSignatures_UCell / calculate_Uscore / u_stat from
-# the installed package source: per-cell descending expression ranks with
-# configurable ties, truncation at max_rank, missing signature genes either
-# imputed at max_rank or skipped, and the normalized Mann-Whitney U statistic
-# of the signature's clamped ranks. Scores are on the official UCell scale
-# (0-1) and are not comparable with the pre-2.16.0-spec rational heuristic.
+# Algorithm spec: UCell 2.16.0 (R package, carmonalab/UCell) — positive-
+# signature subset only (fix-review R07, 2026-10-05). The ucell_score
+# workflow reimplements the ranking/normalization core of
+# ScoreSignatures_UCell / calculate_Uscore / u_stat from the installed
+# package source: per-cell descending expression ranks with configurable
+# ties, truncation at max_rank, missing signature genes either imputed at
+# max_rank or skipped, and the normalized Mann-Whitney U statistic of the
+# signature's clamped ranks. Scores are on the official UCell scale (0-1)
+# and are not comparable with the pre-2.16.0-spec rational heuristic.
+# NOT implemented (explicit input contract — official semantics differ):
+# - signed signatures ("Gene+", "Gene-"): official UCell strips the +/-
+#   suffix, scores positives and negatives separately, and returns
+#   positive − w_neg·negative (clamped at 0; no w_neg parameter exists
+#   here). This implementation matches gene names literally — a suffixed
+#   name simply misses the H5AD. Strip suffixes upstream and pass positive
+#   sets only.
+# - all-missing signatures: official returns 0 for every cell; this
+#   implementation rejects the gene set (ContractError) rather than
+#   emitting an all-zero column.
 UCELL_SPEC_VERSION = "UCell 2.16.0"
 UCELL_TIES_METHODS = ("average", "min", "max", "dense")
 UCELL_MISSING_MODES = ("impute", "skip")

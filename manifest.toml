@@ -514,14 +514,19 @@ ranked per cell by descending expression (rank 1 = highest, ties_method
 breaks ties), ranks are truncated at max_rank, and the score is the
 normalized Mann-Whitney U statistic of the signature's ranks (0-1,
 library-size independent, computed on the raw matrix without
-normalization). Algorithm matches UCell 2.16.0 (ScoreSignatures_UCell);
-scores are on the official UCell scale and are NOT comparable with
-outputs of the pre-fix rational heuristic (report algorithm_version
-distinguishes the runs). missing_genes=impute scores absent signature
-genes at max_rank (official default); skip drops them from the
-signature. max_rank is capped at the number of genes, and a signature
-longer than max_rank is rejected, as in UCell. obs column names and the
-present/missing per-set summary are unchanged.
+normalization). Algorithm matches UCell 2.16.0 (ScoreSignatures_UCell)
+for POSITIVE signatures only (fix-review R07): signed signatures
+("Gene+"/"Gene-" — official strips the suffix and returns positive −
+w_neg·negative, no w_neg parameter exists here) are NOT implemented;
+gene names are matched literally, so strip +/- suffixes upstream and
+pass positive sets only. An all-missing signature is rejected (official
+would return 0 for every cell). Scores are on the official UCell scale
+and are NOT comparable with outputs of the pre-fix rational heuristic
+(report algorithm_version distinguishes the runs). missing_genes=impute
+scores absent signature genes at max_rank (official default); skip drops
+them from the signature. max_rank is capped at the number of genes, and
+a signature longer than max_rank is rejected, as in UCell. obs column
+names and the present/missing per-set summary are unchanged.
 """
 timeout_secs = 3600
 artifact_prefix = "/artifacts/h5ad_ucell_score"
