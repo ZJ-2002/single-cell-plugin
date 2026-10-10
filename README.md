@@ -9,7 +9,7 @@ directory = one plugin family = one git-able unit, one image
 
 - `manifest.toml` — the eleven-node contract: params, ports, panel, image
   provenance
-- `scripts/run_workflow.py` — shared runner shim for the ten H5AD nodes;
+- `scripts/run_workflow.py` — shared runner shim for nine H5AD nodes;
   rebuilds the legacy `params.json` from `SC_P_*` env vars and execs the
   workflow runner baked into the image
 - `Dockerfile`, `.dockerignore`, `requirements.txt`, `preprocess.py`,
@@ -44,12 +44,35 @@ Every node runs isolated (no network) with a read-only root filesystem and
 
 ## Execution shape
 
+### Scoped scoring repair (2026-10-10)
+
+`gene_set_score` now injects `scripts/score_genes.py` directly instead of
+executing the older scorer baked into the image. This is necessary: editing
+the repository's `workflow.py` alone cannot change a digest-pinned runtime.
+The image, family panel, input/output ports and other ten node contracts
+are unchanged. The scorer calls official Scanpy 1.11.3 with explicit
+parameters, selects the raw gene axis when raw exists, does not clamp
+`ctrl_size`, and preserves nonfinite official scores rather than silently
+dropping cells from summary statistics. It rejects duplicate axes, output
+column collisions and invalid signatures/seeds.
+
+The supported wrapper requires two distinct present genes per signature;
+this is not a claim to support every official Scanpy input or parameter.
+Contract tests are `python -m unittest discover -s tests -p
+'test_score_genes_contract.py' -v`. Run `tests/test_score_genes_container.py`
+inside the manifest's pinned image for official-package comparisons.
+These tests do not certify the complete family, the resident daemon, or
+scientific interpretation. In particular, the legacy `h5ad_ucell_score`
+implementation is not certified as official UCell. The family-level
+CellTypist panel is still a deployment prerequisite for all nodes.
+
 - `single_cell_preprocessor` is a **baked-runner** node: the compiled argv
   is `python /opt/autonomics/preprocess.py` (no injected script), and the
   five params travel through the same `AUTONOMICS_SINGLE_CELL_*` env vars
   the legacy wrapper set. The inspect-vs-filters cross-field rule is
   enforced inside `preprocess.py`, so no DSL-side validation is needed.
-- The ten H5AD nodes are **script-injected** nodes with one shared shim.
+- Nine H5AD nodes are **script-injected** nodes with one shared shim;
+  `gene_set_score` injects its dedicated official-package wrapper instead.
   The compiled command is `python` plus the staged shim (the legacy shape
   was `python` plus the staged `workflow.py` — byte-identical argv, a
   different program at argv[1]). The shim writes `params.json` to
@@ -76,7 +99,12 @@ git = "git@github.com:auto-nomics/single-cell-plugin.git"
 rev = "<commit sha>"
 ```
 
-## Migration parity
+## Historical migration parity
+
+The following describes the pre-repair baseline at `1d681eac`. The scoped
+scoring repair deliberately changes `gene_set_score`'s injected script and
+seed bounds, so the old eleven-node byte-equivalence statement is not an
+acceptance claim for this revision. The other ten contracts remain exact.
 
 The golden test (`container-plugin/tests/single_cell_migration.rs`) compares
 each compiled `ContainerCommandSpec` against the legacy Rust wrapper output:

@@ -414,7 +414,11 @@ doc = """
 Input port 0 is H5AD. Output ports are output.h5ad then report.json; each
 score is added to obs using the configured gene-set key. gene_sets is a
 JSON object (passed as a string) mapping gene-set name to an array of gene
-symbols; every set needs at least two genes present in var_names.
+symbols; every set needs at least two distinct genes on the selected raw
+axis when raw exists, otherwise var_names. Scanpy 1.11.3 parameters are
+explicit: ctrl_as_ref=true, n_bins=25, gene_pool=None, layer=None. ctrl_size
+is not clamped. Nonfinite official scores remain in H5AD; all-cell summary
+statistics become null and the report records NONFINITE_OFFICIAL_SCORES.
 """
 timeout_secs = 3600
 artifact_prefix = "/artifacts/gene_set_score"
@@ -429,15 +433,13 @@ outputs = [
 [nodes.params]
 gene_sets = { type = "string", doc = "JSON object mapping gene-set name to array of gene symbols, e.g. \"{\\\"cytotoxic\\\": [\\\"NKG7\\\", \\\"GNLY\\\"]}\"" }
 ctrl_size = { type = "int", default = 50, min = 1.0, doc = "Size of the random control pool per gene set" }
-random_state = { type = "int", default = 0, doc = "Seed for the control pool sampling" }
+random_state = { type = "int", default = 0, min = 0.0, max = 4294967295.0, doc = "NumPy RandomState seed for the control pool sampling" }
 
 [nodes.command]
 interpreter = "python"
-script_file = "scripts/run_workflow.py"
+script_file = "scripts/score_genes.py"
 
 [nodes.command.env]
-AUTONOMICS_SINGLE_CELL_WORKFLOW = "gene_set_score"
-AUTONOMICS_SINGLE_CELL_PARAMS = "/work/.autonomics/files/params.json"
 SC_P_JSON_GENE_SETS = "{{ gene_sets }}"
 SC_P_INT_CTRL_SIZE = "{{ ctrl_size }}"
 SC_P_INT_RANDOM_STATE = "{{ random_state }}"
